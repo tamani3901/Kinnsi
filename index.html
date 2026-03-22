@@ -3,97 +3,151 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>高画質・視界シミュレーター</title>
+    <title>精密・視界再現ツール</title>
     <style>
-        body { font-family: sans-serif; text-align: center; background: #1a1a1a; color: white; margin: 0; display: flex; flex-direction: column; height: 100vh; }
-        .container { position: relative; flex: 1; background: black; overflow: hidden; }
+        body { font-family: sans-serif; text-align: center; background: #1a1a1a; color: white; margin: 0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
         
-        /* 映像レイヤー */
-        video { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); min-width: 100%; min-height: 100%; object-fit: cover; }
-        #video-sub { opacity: 0; pointer-events: none; mix-blend-mode: screen; } /* 乱視の重なりをよりリアルに */
+        /* 映像表示エリア */
+        .container { position: relative; flex: 1; background: black; overflow: hidden; border-bottom: 2px solid #444; }
+        
+        /* 映像レイヤーの基本設定 */
+        video { 
+            position: absolute; 
+            top: 50%; 
+            left: 50%; 
+            transform-origin: center;
+            /* JSで動的に scale と translate を上書きします */
+        }
+        
+        #video-sub { opacity: 0; pointer-events: none; mix-blend-mode: screen; }
 
-        .controls { padding: 15px; background: #333; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 13px; }
-        .control-group { display: flex; flex-direction: column; align-items: center; }
-        input[type="range"] { width: 80%; margin-top: 5px; }
-        span { margin-bottom: 2px; color: #ffeb3b; }
+        /* 操作パネル */
+        .controls { 
+            padding: 10px; 
+            background: #2a2a2a; 
+            display: grid; 
+            grid-template-columns: 1fr 1fr; 
+            gap: 8px 15px; 
+            font-size: 12px;
+            max-height: 40vh;
+            overflow-y: auto;
+        }
+        .control-group { display: flex; flex-direction: column; align-items: center; padding: 5px; background: #333; border-radius: 5px; }
+        input[type="range"] { width: 90%; margin-top: 5px; cursor: pointer; }
+        span { font-weight: bold; color: #ffeb3b; margin-bottom: 2px; }
+        .val-display { color: #fff; font-size: 10px; margin-top: 2px; }
     </style>
 </head>
 <body>
 
-<div class="container">
+<div class="container" id="screen">
     <video id="video-main" autoplay playsinline></video>
     <video id="video-sub" autoplay playsinline></video>
 </div>
 
 <div class="controls">
     <div class="control-group">
+        <span>視野サイズ (ズーム)</span>
+        <input type="range" id="scale-range" min="0.5" max="3.0" step="0.1" value="1.0">
+        <div class="val-display" id="val-scale">1.0x</div>
+    </div>
+    <div class="control-group">
         <span>近視 (ぼかし)</span>
-        <input type="range" id="blur-range" min="0" max="30" value="0">
+        <input type="range" id="blur-range" min="0" max="40" value="0">
+        <div class="val-display" id="val-blur">0px</div>
     </div>
     <div class="control-group">
-        <span>乱視 (二重幅)</span>
-        <input type="range" id="double-range" min="0" max="50" value="0">
+        <span>二重のズレ幅</span>
+        <input type="range" id="double-range" min="0" max="60" value="0">
+        <div class="val-display" id="val-double">0px</div>
     </div>
     <div class="control-group">
-        <span>明るさ (露出)</span>
-        <input type="range" id="bright-range" min="0.2" max="2" step="0.1" value="1">
+        <span>二重の角度</span>
+        <input type="range" id="angle-range" min="0" max="360" value="0">
+        <div class="val-display" id="val-angle">0°</div>
     </div>
     <div class="control-group">
-        <span>くっきり感 (コントラスト)</span>
-        <input type="range" id="contrast-range" min="0.5" max="2" step="0.1" value="1">
+        <span>明るさ</span>
+        <input type="range" id="bright-range" min="0.2" max="2.0" step="0.1" value="1.0">
+    </div>
+    <div class="control-group">
+        <span>コントラスト</span>
+        <input type="range" id="contrast-range" min="0.5" max="2.0" step="0.1" value="1.0">
     </div>
 </div>
 
 <script>
-    const videoMain = document.getElementById('video-main');
-    const videoSub = document.getElementById('video-sub');
-    const blurRange = document.getElementById('blur-range');
-    const doubleRange = document.getElementById('double-range');
-    const brightRange = document.getElementById('bright-range');
-    const contrastRange = document.getElementById('contrast-range');
+    const vMain = document.getElementById('video-main');
+    const vSub = document.getElementById('video-sub');
+    const ranges = {
+        scale: document.getElementById('scale-range'),
+        blur: document.getElementById('blur-range'),
+        double: document.getElementById('double-range'),
+        angle: document.getElementById('angle-range'),
+        bright: document.getElementById('bright-range'),
+        contrast: document.getElementById('contrast-range')
+    };
+    
+    const displays = {
+        scale: document.getElementById('val-scale'),
+        blur: document.getElementById('val-blur'),
+        double: document.getElementById('val-double'),
+        angle: document.getElementById('val-angle')
+    };
 
     async function setupCamera() {
-        // 高画質（HD）をリクエスト
         const constraints = {
-            video: {
-                width: { ideal: 1920 },
-                height: { ideal: 1080 },
-                facingMode: "environment"
-            },
+            video: { width: { ideal: 1920 }, height: { ideal: 1080 }, facingMode: "environment" },
             audio: false
         };
-
         try {
             const stream = await navigator.mediaDevices.getUserMedia(constraints);
-            videoMain.srcObject = stream;
-            videoSub.srcObject = stream;
+            vMain.srcObject = stream;
+            vSub.srcObject = stream;
         } catch (err) {
-            alert("カメラの設定に失敗しました。解像度が対応していない可能性があります。");
+            alert("カメラの起動に失敗しました。解像度設定を確認してください。");
         }
     }
 
-    function updateFilters() {
-        const b = blurRange.value;
-        const d = doubleRange.value;
-        const br = brightRange.value;
-        const ct = contrastRange.value;
+    function update() {
+        const s = ranges.scale.value;
+        const b = ranges.blur.value;
+        const d = ranges.double.value;
+        const a = ranges.angle.value;
+        const br = ranges.bright.value;
+        const ct = ranges.contrast.value;
 
-        const filterString = `blur(${b}px) brightness(${br}) contrast(${ct})`;
-        
-        videoMain.style.filter = filterString;
-        
+        // 数値表示の更新
+        displays.scale.innerText = s + "x";
+        displays.blur.innerText = b + "px";
+        displays.double.innerText = d + "px";
+        displays.angle.innerText = a + "°";
+
+        const commonFilter = `blur(${b}px) brightness(${br}) contrast(${ct})`;
+
+        // メイン映像の配置とフィルタ
+        vMain.style.filter = commonFilter;
+        vMain.style.transform = `translate(-50%, -50%) scale(${s})`;
+
+        // サブ映像（二重）の配置とフィルタ
         if (d > 0) {
-            videoSub.style.opacity = "0.5";
-            videoSub.style.filter = filterString;
-            // 乱視っぽく斜めに少しずらす設定
-            videoSub.style.transform = `translate(calc(-50% + ${d}px), calc(-50% + ${d/2}px)) scale(1.02)`;
+            vSub.style.opacity = "0.5";
+            vSub.style.filter = commonFilter;
+            
+            // 角度計算
+            const rad = a * Math.PI / 180;
+            const x = Math.cos(rad) * d;
+            const y = Math.sin(rad) * d;
+            
+            // センター配置(-50%)を維持しつつ、ズレ(x,y)を加え、さらに全体スケール(s)を適用
+            vSub.style.transform = `translate(calc(-50% + ${x}px), calc(-50% + ${y}px)) scale(${s})`;
         } else {
-            videoSub.style.opacity = "0";
+            vSub.style.opacity = "0";
         }
     }
 
-    [blurRange, doubleRange, brightRange, contrastRange].forEach(el => {
-        el.addEventListener('input', updateFilters);
+    Object.values(ranges).forEach(input => {
+        input.addEventListener('input', update);
     });
 
     setupCamera();
