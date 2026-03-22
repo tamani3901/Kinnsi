@@ -3,153 +3,127 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>精密・視界再現ツール</title>
+    <title>多重視界シミュレーター</title>
     <style>
         body { font-family: sans-serif; text-align: center; background: #1a1a1a; color: white; margin: 0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
-        
-        /* 映像表示エリア */
         .container { position: relative; flex: 1; background: black; overflow: hidden; border-bottom: 2px solid #444; }
         
-        /* 映像レイヤーの基本設定 */
-        video { 
-            position: absolute; 
-            top: 50%; 
-            left: 50%; 
-            transform-origin: center;
-            /* JSで動的に scale と translate を上書きします */
-        }
-        
-        #video-sub { opacity: 0; pointer-events: none; mix-blend-mode: screen; }
+        video { position: absolute; top: 50%; left: 50%; transform-origin: center; }
+        /* 重なる映像（2枚目以降）の設定 */
+        .extra-video { opacity: 0; pointer-events: none; mix-blend-mode: screen; }
 
-        /* 操作パネル */
         .controls { 
-            padding: 10px; 
-            background: #2a2a2a; 
-            display: grid; 
-            grid-template-columns: 1fr 1fr; 
-            gap: 8px 15px; 
-            font-size: 12px;
-            max-height: 40vh;
-            overflow-y: auto;
+            padding: 10px; background: #2a2a2a; 
+            display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; 
+            font-size: 11px; max-height: 45vh; overflow-y: auto;
         }
-        .control-group { display: flex; flex-direction: column; align-items: center; padding: 5px; background: #333; border-radius: 5px; }
-        input[type="range"] { width: 90%; margin-top: 5px; cursor: pointer; }
-        span { font-weight: bold; color: #ffeb3b; margin-bottom: 2px; }
-        .val-display { color: #fff; font-size: 10px; margin-top: 2px; }
+        .control-group { display: flex; flex-direction: column; align-items: center; padding: 6px; background: #333; border-radius: 5px; }
+        input[type="range"] { width: 90%; margin-top: 4px; }
+        span { font-weight: bold; color: #ffeb3b; }
+        .val-display { color: #fff; font-size: 10px; }
     </style>
 </head>
 <body>
 
 <div class="container" id="screen">
-    <video id="video-main" autoplay playsinline></video>
-    <video id="video-sub" autoplay playsinline></video>
+    <video id="v0" autoplay playsinline></video> <video id="v1" class="extra-video" autoplay playsinline></video>
+    <video id="v2" class="extra-video" autoplay playsinline></video>
+    <video id="v3" class="extra-video" autoplay playsinline></video>
 </div>
 
 <div class="controls">
     <div class="control-group">
-        <span>視野サイズ (ズーム)</span>
+        <span>多重度 (枚数)</span>
+        <input type="range" id="count-range" min="1" max="4" value="1">
+        <div class="val-display" id="val-count">1枚 (通常)</div>
+    </div>
+    <div class="control-group">
+        <span>視野サイズ</span>
         <input type="range" id="scale-range" min="0.5" max="3.0" step="0.1" value="1.0">
-        <div class="val-display" id="val-scale">1.0x</div>
     </div>
     <div class="control-group">
         <span>近視 (ぼかし)</span>
         <input type="range" id="blur-range" min="0" max="40" value="0">
-        <div class="val-display" id="val-blur">0px</div>
     </div>
     <div class="control-group">
-        <span>二重のズレ幅</span>
-        <input type="range" id="double-range" min="0" max="60" value="0">
-        <div class="val-display" id="val-double">0px</div>
+        <span>ズレ幅 (距離)</span>
+        <input type="range" id="dist-range" min="0" max="80" value="0">
     </div>
     <div class="control-group">
-        <span>二重の角度</span>
+        <span>基準角度</span>
         <input type="range" id="angle-range" min="0" max="360" value="0">
-        <div class="val-display" id="val-angle">0°</div>
     </div>
     <div class="control-group">
-        <span>明るさ</span>
+        <span>露出 (明るさ)</span>
         <input type="range" id="bright-range" min="0.2" max="2.0" step="0.1" value="1.0">
-    </div>
-    <div class="control-group">
-        <span>コントラスト</span>
-        <input type="range" id="contrast-range" min="0.5" max="2.0" step="0.1" value="1.0">
     </div>
 </div>
 
 <script>
-    const vMain = document.getElementById('video-main');
-    const vSub = document.getElementById('video-sub');
+    const videos = [
+        document.getElementById('v0'),
+        document.getElementById('v1'),
+        document.getElementById('v2'),
+        document.getElementById('v3')
+    ];
+
     const ranges = {
+        count: document.getElementById('count-range'),
         scale: document.getElementById('scale-range'),
         blur: document.getElementById('blur-range'),
-        double: document.getElementById('double-range'),
+        dist: document.getElementById('dist-range'),
         angle: document.getElementById('angle-range'),
-        bright: document.getElementById('bright-range'),
-        contrast: document.getElementById('contrast-range')
-    };
-    
-    const displays = {
-        scale: document.getElementById('val-scale'),
-        blur: document.getElementById('val-blur'),
-        double: document.getElementById('val-double'),
-        angle: document.getElementById('val-angle')
+        bright: document.getElementById('bright-range')
     };
 
+    const valCount = document.getElementById('val-count');
+
     async function setupCamera() {
-        const constraints = {
-            video: { width: { ideal: 1920 }, height: { ideal: 1080 }, facingMode: "environment" },
-            audio: false
-        };
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia(constraints);
-            vMain.srcObject = stream;
-            vSub.srcObject = stream;
-        } catch (err) {
-            alert("カメラの起動に失敗しました。解像度設定を確認してください。");
-        }
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: { width: { ideal: 1920 }, height: { ideal: 1080 }, facingMode: "environment" }
+        });
+        videos.forEach(v => v.srcObject = stream);
     }
 
     function update() {
+        const count = parseInt(ranges.count.value);
         const s = ranges.scale.value;
         const b = ranges.blur.value;
-        const d = ranges.double.value;
-        const a = ranges.angle.value;
+        const d = ranges.dist.value;
+        const a = parseInt(ranges.angle.value);
         const br = ranges.bright.value;
-        const ct = ranges.contrast.value;
 
-        // 数値表示の更新
-        displays.scale.innerText = s + "x";
-        displays.blur.innerText = b + "px";
-        displays.double.innerText = d + "px";
-        displays.angle.innerText = a + "°";
+        valCount.innerText = count + "重";
+        const filter = `blur(${b}px) brightness(${br})`;
 
-        const commonFilter = `blur(${b}px) brightness(${br}) contrast(${ct})`;
+        videos.forEach((v, i) => {
+            if (i >= count) {
+                v.style.opacity = "0";
+                return;
+            }
 
-        // メイン映像の配置とフィルタ
-        vMain.style.filter = commonFilter;
-        vMain.style.transform = `translate(-50%, -50%) scale(${s})`;
+            v.style.filter = filter;
 
-        // サブ映像（二重）の配置とフィルタ
-        if (d > 0) {
-            vSub.style.opacity = "0.5";
-            vSub.style.filter = commonFilter;
-            
-            // 角度計算
-            const rad = a * Math.PI / 180;
-            const x = Math.cos(rad) * d;
-            const y = Math.sin(rad) * d;
-            
-            // センター配置(-50%)を維持しつつ、ズレ(x,y)を加え、さらに全体スケール(s)を適用
-            vSub.style.transform = `translate(calc(-50% + ${x}px), calc(-50% + ${y}px)) scale(${s})`;
-        } else {
-            vSub.style.opacity = "0";
-        }
+            if (i === 0) {
+                // メイン映像（中心）
+                v.style.opacity = "1";
+                v.style.transform = `translate(-50%, -50%) scale(${s})`;
+            } else {
+                // 重なる映像（分散配置）
+                v.style.opacity = (0.6 / (count - 1)).toString(); // 枚数が増えるほど1枚を薄くする
+                
+                // 配置角度の計算 (3重なら120度、4重なら90度ずつずらす)
+                const offsetAngle = (360 / (count - 1)) * (i - 1) + a;
+                const rad = offsetAngle * Math.PI / 180;
+                const x = Math.cos(rad) * d;
+                const y = Math.sin(rad) * d;
+
+                v.style.transform = `translate(calc(-50% + ${x}px), calc(-50% + ${y}px)) scale(${s})`;
+            }
+        });
     }
 
-    Object.values(ranges).forEach(input => {
-        input.addEventListener('input', update);
-    });
-
+    Object.values(ranges).forEach(r => r.addEventListener('input', update));
     setupCamera();
 </script>
 
