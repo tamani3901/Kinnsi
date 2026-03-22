@@ -2,30 +2,40 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>精密・多重視界再現</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>視界再現シミュレーター V3</title>
     <style>
         body { font-family: sans-serif; text-align: center; background: #1a1a1a; color: white; margin: 0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
-        .container { position: relative; flex: 1; background: black; overflow: hidden; border-bottom: 2px solid #444; }
         
-        video { position: absolute; top: 50%; left: 50%; transform-origin: center; }
-        /* 濃くするために opacity を高めに設定 */
-        .extra-video { pointer-events: none; mix-blend-mode: screen; }
+        /* 表示エリア：ここからはみ出さないように設定 */
+        .container { position: relative; flex: 1; background: black; overflow: hidden; }
+        
+        video { 
+            position: absolute; 
+            top: 50%; 
+            left: 50%; 
+            /* 初期状態は中央配置。JSで transform を上書き */
+            transform: translate(-50%, -50%);
+            width: 100%; 
+            height: 100%;
+            object-fit: contain; /* ズームを防ぐために contain に変更 */
+        }
+        
+        .extra-video { pointer-events: none; mix-blend-mode: screen; display: none; }
 
         .controls { 
             padding: 10px; background: #2a2a2a; 
-            display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; 
-            font-size: 11px; max-height: 45vh; overflow-y: auto;
+            display: grid; grid-template-columns: 1fr 1fr; gap: 10px; 
+            font-size: 11px; max-height: 40vh; overflow-y: auto;
         }
-        .control-group { display: flex; flex-direction: column; align-items: center; padding: 6px; background: #333; border-radius: 5px; }
-        input[type="range"] { width: 95%; margin-top: 4px; }
+        .control-group { display: flex; flex-direction: column; align-items: center; padding: 8px; background: #333; border-radius: 8px; }
+        input[type="range"] { width: 90%; margin-top: 5px; }
         span { font-weight: bold; color: #ffeb3b; }
-        .hint { font-size: 9px; color: #bbb; margin-top: 2px; }
     </style>
 </head>
 <body>
 
-<div class="container">
+<div class="container" id="stage">
     <video id="v0" autoplay playsinline></video>
     <video id="v1" class="extra-video" autoplay playsinline></video>
     <video id="v2" class="extra-video" autoplay playsinline></video>
@@ -34,28 +44,27 @@
 
 <div class="controls">
     <div class="control-group">
-        <span>距離感調整 (画角)</span>
-        <input type="range" id="scale-range" min="0.8" max="4.0" step="0.05" value="1.5">
-        <div class="hint">実物のサイズと重なるまで調整</div>
+        <span>サイズ(距離感)</span>
+        <input type="range" id="scale-range" min="0.5" max="3.0" step="0.01" value="1.0">
     </div>
     <div class="control-group">
         <span>多重の濃さ</span>
-        <input type="range" id="opacity-range" min="0.1" max="0.9" step="0.1" value="0.6">
+        <input type="range" id="opacity-range" min="0.1" max="1.0" step="0.1" value="0.7">
     </div>
     <div class="control-group">
-        <span>多重度 (1〜4枚)</span>
+        <span>多重度 (枚数)</span>
         <input type="range" id="count-range" min="1" max="4" value="1">
     </div>
     <div class="control-group">
         <span>近視 (ぼかし)</span>
-        <input type="range" id="blur-range" min="0" max="50" value="0">
+        <input type="range" id="blur-range" min="0" max="40" value="0">
     </div>
     <div class="control-group">
         <span>ズレ幅 (距離)</span>
-        <input type="range" id="dist-range" min="0" max="100" value="0">
+        <input type="range" id="dist-range" min="0" max="150" value="0">
     </div>
     <div class="control-group">
-        <span>回転角度</span>
+        <span>角度回転</span>
         <input type="range" id="angle-range" min="0" max="360" value="0">
     </div>
 </div>
@@ -72,11 +81,14 @@
     };
 
     async function setupCamera() {
-        // 最高画質をリクエストして歪みを減らす
-        const stream = await navigator.mediaDevices.getUserMedia({
-            video: { width: { ideal: 3840 }, height: { ideal: 2160 }, facingMode: "environment" }
-        });
-        videos.forEach(v => v.srcObject = stream);
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: { width: { ideal: 1920 }, height: { ideal: 1080 }, facingMode: "environment" }
+            });
+            videos.forEach(v => v.srcObject = stream);
+        } catch (err) {
+            console.error(err);
+        }
     }
 
     function update() {
@@ -87,7 +99,7 @@
         const a = parseInt(r.angle.value);
         const op = r.opacity.value;
 
-        const filter = `blur(${b}px) brightness(1.0)`;
+        const filter = `blur(${b}px)`;
 
         videos.forEach((v, i) => {
             if (i >= count) {
@@ -99,14 +111,17 @@
 
             if (i === 0) {
                 v.style.opacity = "1";
+                // 中央固定(-50%)しつつ、scaleを適用
                 v.style.transform = `translate(-50%, -50%) scale(${s})`;
             } else {
-                // 重なりを「濃く」設定
                 v.style.opacity = op;
+                // 分散角度の計算
                 const offsetAngle = (360 / (count > 1 ? count : 1)) * i + a;
                 const rad = offsetAngle * Math.PI / 180;
+                // ズレ幅dをピクセルとして適用
                 const x = Math.cos(rad) * d;
                 const y = Math.sin(rad) * d;
+                // 元のセンター配置(-50%)を維持しながら移動と拡大を組み合わせる
                 v.style.transform = `translate(calc(-50% + ${x}px), calc(-50% + ${y}px)) scale(${s})`;
             }
         });
@@ -114,6 +129,8 @@
 
     Object.values(r).forEach(input => input.addEventListener('input', update));
     setupCamera();
+    // 最初の描画を少し遅らせて安定させる
+    setTimeout(update, 500);
 </script>
 
 </body>
